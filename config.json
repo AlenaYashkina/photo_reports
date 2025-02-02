@@ -1,0 +1,27 @@
+{
+  "api_id": 12345678,
+  "api_hash": "your_api_hash_here",
+  "phone_number": "+1234567890",
+  "chat_id": "-1001234567890",
+  "topics": [
+    1001,
+    1002,
+    1003,
+    1004
+  ],
+
+  "folder_path": "C:\\Path\\To\\Your\\Downloads\\Example",
+
+  "output_path": "C:\\Path\\To\\Your\\Reports\\Example.pptx",
+  "title_content": "Example Report\nExecutor: Example Company\nClient: Example Client\nContract: ABC123\nProject Type: Type X\nNumber of Structures: 3\nInstallation Address: Example Street, 123, Example City\n\nReporting Period: 01.01.2024-31.12.2024",
+
+  "START_TIME": "12:00:00",
+  "DURATION_BEFORE_WORKS": "01:00:00",
+  "DURATION": "02:00:00",
+  "LOCATIONS": [
+    "Unknown Road\nExample District\nExample City",
+    "Example Street, 1\nExample District\nExample City",
+    "Example Avenue, 2\nExample District\nExample City",
+    "Sample Road, 3\nExample District\nExample City"
+  ]
+}

@@ -1,0 +1,8 @@
+telethon
+tqdm
+numpy
+pillow
+python-pptx
+pywin32
+pycairo
+natsort
