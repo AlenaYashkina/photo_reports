@@ -93,57 +93,81 @@ def calculate_visual_difference(img1_path: str, img2_path: str) -> float:
 
 def generate_duration_timestamps(num_duration: int, t_before: int, duration: int, duration_images: list) -> list:
     """
-    Generate timestamps for images in the DURATION interval.
-    Time intervals are proportional to the visual difference between consecutive images.
-    If there is only one image, simply return [t_before + duration].
+    Генерация уникальных временных меток для изображений в интервале DURATION.
+    Метки времени назначаются в алфавитном порядке имен файлов.
     """
-    t_end = t_before + duration
-    if num_duration == 1:
-        return [t_end]
-    diffs = []
-    for i in range(num_duration - 1):
-        diff = calculate_visual_difference(duration_images[i], duration_images[i + 1])
-        diffs.append(diff)
-    total_diff = sum(diffs) if sum(diffs) != 0 else 1  # prevent division by zero
-    intervals = [(d / total_diff) * duration for d in diffs]
-    timestamps = []
-    current = t_before
+    # Сортировка по имени файла
+    duration_images.sort(key=lambda x: os.path.basename(x).lower())
+
+    # Определение начала и конца интервала с разбросом ±30 минут
+    t_start = t_before + random.randint(-1800, 1800)
+    t_end = t_before + duration + random.randint(-1800, 1800)
+
+    # Проверка, чтобы t_start был меньше t_end
+    t_start, t_end = min(t_start, t_end), max(t_start, t_end)
+
+    # Расчёт визуальных различий
+    diffs = [calculate_visual_difference(duration_images[i], duration_images[i + 1]) for i in range(num_duration - 1)]
+    total_diff = sum(diffs) or 1  # Предотвращение деления на ноль
+
+    # Интервалы времени
+    intervals = [(diff / total_diff) * (t_end - t_start) for diff in diffs]
+
+    # Генерация временных меток
+    timestamps = [t_start]
     for gap in intervals:
-        current += gap
-        timestamps.append(int(current))
+        next_time = max(timestamps[-1] + 1, timestamps[-1] + int(gap))  # Уникальность меток
+        timestamps.append(next_time)
+
+    # Ограничение последней метки
+    timestamps[-1] = min(timestamps[-1], t_end)
+
     return timestamps
 
 
-def generate_timestamps(num_images: int, start_time: int, duration_before: int, duration: int, image_files: list) -> list:
+def generate_timestamps(num_images: int, start_time: int, duration_before: int, duration: int,
+                        image_files: list) -> list:
     """
-    Generate a sorted list of timestamps for num_images.
-    The first image gets time START_TIME ±30 min.
-    The second image gets time = first image + DURATION_BEFORE_WORKS ±30 min.
-    The remaining images are distributed in the remaining DURATION period with intervals
-    proportional to the visual difference between adjacent images.
+    Генерация временных меток на основе визуальной разницы между изображениями.
+    Чем больше разница между фото, тем больше интервал времени между ними.
     """
     timestamps = []
+
+    # Время для первого изображения (с небольшим рандомным сдвигом)
     t1 = start_time + random.randint(-1800, 1800)
     timestamps.append(t1)
+
+    # Время для второго изображения
     t2 = t1 + duration_before + random.randint(-1800, 1800)
     timestamps.append(t2)
+
     if num_images == 2:
         return sorted(timestamps)
+
+    # Вычисляем визуальную разницу между соседними изображениями
     diffs = []
     for i in range(1, num_images - 1):
         diff = calculate_visual_difference(image_files[i], image_files[i + 1])
         diffs.append(diff)
-    total_diff = sum(diffs) or 1
+
+    # Сумма всех различий
+    total_diff = sum(diffs) or 1  # Предотвращение деления на ноль
+
+    # Расчёт интервалов на основе различий
     if total_diff == 0:
+        # Если различий нет, распределяем равномерно
         intervals = [duration / (num_images - 2)] * (num_images - 2)
     else:
+        # Пропорциональное распределение времени
         intervals = [(d / total_diff) * duration for d in diffs]
+
     current_time = t2
     for gap in intervals:
-        current_time += gap
-        timestamps.append(int(current_time))
-    timestamps.sort()
-    return timestamps
+        # Генерация следующего временного интервала с учётом минимального шага
+        current_time += max(1, int(gap))
+        timestamps.append(current_time)
+
+    return sorted(timestamps)
 
 
 def process_image(image_path: str, timestamp: int, date_obj: datetime, location: str) -> None:
@@ -228,76 +252,49 @@ def group_by_prefix(candidates: list) -> list:
 
 
 def process_incident(incident_folder: str) -> None:
-    """
-    Process an incident folder (e.g. "1", "2") with subfolders.
-    Distribution logic:
-      - The first subfolder: start photo = START_TIME ±30 min.
-      - The second subfolder: photo with prefix "1_" gets time = start + DURATION_BEFORE_WORKS ±30 min,
-        photos with prefix "2_" are assigned to DURATION group.
-      - All subsequent subfolders: all photos are in the DURATION group.
-    For each subfolder, group files by prefix and keep only one file per prefix.
-    """
-    subfolders = [
-        os.path.join(incident_folder, d)
-        for d in os.listdir(incident_folder)
-        if os.path.isdir(os.path.join(incident_folder, d))
-    ]
-    if not subfolders:
-        logging.info("No subfolders in incident %s", incident_folder)
-        return
+    subfolders = sorted(  # Сортировка папок по алфавиту
+        [
+            os.path.join(incident_folder, d)
+            for d in os.listdir(incident_folder)
+            if os.path.isdir(os.path.join(incident_folder, d))
+        ],
+        key=lambda d: os.path.basename(d).lower()
+    )
 
-    subfolders.sort(key=lambda d: int(re.match(r'(\d+)', os.path.basename(d)).group(1)))
-    start_images = []
-    before_images = []
-    duration_images = []
+    all_images = []  # Список для всех изображений в нужном порядке
 
-    for idx, folder in enumerate(subfolders):
-        candidates = [
-            os.path.join(folder, f)
-            for f in os.listdir(folder)
-            if f.lower().endswith((".jpg", ".jpeg", ".png")) and "_stamped" not in f.lower()
-        ]
-        candidates = group_by_prefix(candidates)
-        if not candidates:
-            continue
-        if idx == 0:
-            start_images.append(candidates[0])
-        elif idx == 1:
-            for file in candidates:
-                basename = os.path.basename(file)
-                if re.match(r'^1_', basename):
-                    before_images.append(file)
-                elif re.match(r'^2_', basename):
-                    duration_images.append(file)
-                else:
-                    if not before_images:
-                        before_images.append(file)
-                    else:
-                        duration_images.append(file)
-        else:
-            duration_images.extend(candidates)
+    for folder in subfolders:
+        candidates = sorted(  # Сортировка файлов по алфавиту
+            [
+                os.path.join(folder, f)
+                for f in os.listdir(folder)
+                if f.lower().endswith((".jpg", ".jpeg", ".png")) and "_stamped" not in f.lower()
+            ],
+            key=lambda x: os.path.basename(x).lower()
+        )
 
-    if not start_images or not before_images:
-        logging.error("Incident %s: Missing start photo or before-work photo", incident_folder)
-        return
+        # Группировка файлов по префиксу
+        grouped_files = group_by_prefix(candidates)
 
+        # Сортировка сгруппированных файлов по имени
+        grouped_files.sort(key=lambda x: os.path.basename(x).lower())
+
+        # Добавляем в общий список
+        all_images.extend(grouped_files)
+
+    # Проверка даты для первой папки
     folder_date_match = re.search(r"\d{2}\.\d{2}\.\d{4}", os.path.basename(subfolders[0]))
     if not folder_date_match:
         logging.error("Incident %s: Could not extract date from folder name", incident_folder)
         return
     incident_date = datetime.strptime(folder_date_match.group(), "%d.%m.%Y")
 
+    # Генерация временных меток
     start_seconds = time_to_seconds(START_TIME)
     before_seconds = time_to_seconds(DURATION_BEFORE_WORKS)
     duration_seconds = time_to_seconds(DURATION)
 
-    t_start = start_seconds + random.randint(-1800, 1800)
-    t_before = t_start + before_seconds + random.randint(-1800, 1800)
-    duration_timestamps = generate_duration_timestamps(len(duration_images), t_before, duration_seconds, duration_images)
-
-    # Ensure the number of timestamps matches the number of images
-    if len(duration_timestamps) < len(duration_images):
-        duration_timestamps.append(t_before + duration_seconds)
+    timestamps = generate_timestamps(len(all_images), start_seconds, before_seconds, duration_seconds, all_images)
 
     def adjust_timestamp(t: int, base_date: datetime) -> (datetime, int):
         current_date = base_date
@@ -306,48 +303,31 @@ def process_incident(incident_folder: str) -> None:
             t -= 86400
         return current_date, t
 
-    current_date, t = adjust_timestamp(t_start, incident_date)
-    process_image(start_images[0], t, current_date, random.choice(LOCATIONS))
-
-    current_date, t = adjust_timestamp(t_before, incident_date)
-    process_image(before_images[0], t, current_date, random.choice(LOCATIONS))
-
-    for img_path, ts in zip(duration_images, duration_timestamps):
+    # Штамповка файлов в нужном порядке
+    for img_path, ts in zip(all_images, timestamps):
         current_date, t = adjust_timestamp(ts, incident_date)
         process_image(img_path, t, current_date, random.choice(LOCATIONS))
 
 
 def process_folder(folder: str) -> None:
-    """
-    Process a leaf folder (without subdirectories):
-      - Group candidate files by prefix.
-      - Extract the date from the folder name.
-      - Generate timestamps for all photos.
-      - Stamp each photo.
-    """
-    candidates = [
-        f for f in os.listdir(folder)
-        if f.lower().endswith((".jpg", ".jpeg", ".png")) and "_stamped" not in f.lower()
-    ]
+    candidates = sorted(  # Сортировка файлов по алфавиту
+        [
+            os.path.join(folder, f)
+            for f in os.listdir(folder)
+            if f.lower().endswith((".jpg", ".jpeg", ".png")) and "_stamped" not in f.lower()
+        ],
+        key=lambda x: os.path.basename(x).lower()
+    )
+
     if not candidates:
         logging.info("No candidate images in folder: %s", folder)
         return
 
-    groups = {}
-    for file in candidates:
-        match = re.match(r'^([\d_]+)', file)
-        if match:
-            prefix = match.group(1).rstrip('_')
-        else:
-            prefix = file
-        if prefix in groups:
-            if len(file) > len(groups[prefix]):
-                groups[prefix] = file
-        else:
-            groups[prefix] = file
-    grouped_files = [os.path.join(folder, groups[p]) for p in groups]
-    num_files = len(grouped_files)
-    logging.info("Folder '%s' - selected %d images", folder, num_files)
+    # Группировка файлов по префиксу
+    grouped_files = group_by_prefix(candidates)
+
+    # Сортировка сгруппированных файлов по имени
+    grouped_files.sort(key=lambda x: os.path.basename(x).lower())
 
     folder_name = os.path.basename(folder)
     date_match = re.search(r"\d{2}\.\d{2}\.\d{4}", folder_name)
@@ -359,18 +339,20 @@ def process_folder(folder: str) -> None:
     start_seconds = time_to_seconds(START_TIME)
     duration_before_seconds = time_to_seconds(DURATION_BEFORE_WORKS)
     duration_seconds = time_to_seconds(DURATION)
-    timestamps_seconds = generate_timestamps(num_files, start_seconds, duration_before_seconds, duration_seconds, grouped_files)
 
-    timestamps = []
-    for t in timestamps_seconds:
-        current_date = folder_date
+    timestamps = generate_timestamps(len(grouped_files), start_seconds, duration_before_seconds, duration_seconds, grouped_files)
+
+    def adjust_timestamp(t: int, base_date: datetime) -> (datetime, int):
+        current_date = base_date
         while t >= 86400:
             current_date += timedelta(days=1)
             t -= 86400
-        timestamps.append((current_date, t))
+        return current_date, t
 
-    for image_path, (date_obj, t) in zip(grouped_files, timestamps):
-        process_image(image_path, t, date_obj, random.choice(LOCATIONS))
+    # Штамповка файлов
+    for img_path, ts in zip(grouped_files, timestamps):
+        current_date, t = adjust_timestamp(ts, folder_date)
+        process_image(img_path, t, current_date, random.choice(LOCATIONS))
 
 
 def main() -> None:
